@@ -2,6 +2,9 @@ import os
 import io
 import json
 from datetime import datetime, timedelta, timezone
+import re
+from html import unescape
+import httpx
 from typing import List, Optional, Dict, Any
 
 import feedparser
@@ -10,6 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, AnyHttpUrl
 from dateutil import parser as dateparser
 from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # ASGI app for Vercel Python function: export `app`
@@ -62,12 +69,12 @@ def get_memory(session_id: str) -> SessionMemory:
 
 # ----- Default RSS Feeds (AI-focused) -----
 DEFAULT_FEEDS: Dict[str, str] = {
-    # Verified commonly available feeds; users can also provide custom RSS URLs
-    "Google AI Blog": "https://ai.googleblog.com/atom.xml",
-    "DeepMind": "https://deepmind.google/discover/blog/feed.xml",
+    # Working RSS feeds verified as of 2025
     "Hugging Face Blog": "https://huggingface.co/blog/feed.xml",
-    "Stability AI": "https://stability.ai/blog/rss.xml",
     "The Gradient": "https://thegradient.pub/rss/",
+    "MIT Technology Review AI": "https://www.technologyreview.com/tag/artificial-intelligence/feed/",
+    "VentureBeat AI": "https://venturebeat.com/ai/feed/",
+    "AI News": "https://artificialintelligence-news.com/feed/",
 }
 
 
@@ -105,14 +112,30 @@ class SummarizeResponse(BaseModel):
     summary_markdown: str
 
 
+# ----- Per-Article Summaries (Highlights) -----
+class HighlightItem(BaseModel):
+    title: str
+    link: AnyHttpUrl
+    source: Optional[str] = None
+    summary: str
+
+
 class TweetsRequest(BaseModel):
     session_id: str
-    summary_markdown: str
+    summaries: List[HighlightItem]  # Changed to use individual summaries
     prior_history: Optional[List[ConversationTurn]] = None
 
 
+class Tweet(BaseModel):
+    id: str
+    content: str
+    summary_title: str
+    summary_link: str
+    summary_source: str
+
+
 class TweetsResponse(BaseModel):
-    tweets: List[str]
+    tweets: List[Tweet]
 
 
 class NewsletterRequest(BaseModel):
@@ -133,9 +156,28 @@ class EditRequest(BaseModel):
     prior_history: Optional[List[ConversationTurn]] = None
 
 
+class SummariesSelectedRequest(BaseModel):
+    articles: List[Article]
+
+
 class EditResponse(BaseModel):
     edited_text: str
     history: List[ConversationTurn]
+
+
+class TweetEditRequest(BaseModel):
+    session_id: str
+    tweet_id: str
+    current_tweet: str
+    original_summary: str
+    user_message: str
+    conversation_history: Optional[List[ConversationTurn]] = None
+
+
+class TweetEditResponse(BaseModel):
+    new_tweet: str
+    ai_response: str
+    conversation_history: List[ConversationTurn]
 
 
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -158,7 +200,8 @@ def get_defaults() -> Dict[str, str]:
 
 @app.post("/aggregate", response_model=AggregateResponse)
 def aggregate(req: AggregateRequest) -> AggregateResponse:
-    sources = req.sources or list(DEFAULT_FEEDS.values())
+    # Only retrieve from explicitly selected sources. If none provided, return empty.
+    sources = req.sources or []
     cutoff = datetime.now(timezone.utc) - timedelta(days=req.since_days)
 
     collected: List[Article] = []
@@ -200,6 +243,172 @@ def aggregate(req: AggregateRequest) -> AggregateResponse:
     return AggregateResponse(articles=collected)
 
 
+# ----- Simple Web Scraper (no external heavy deps) -----
+class ScrapeRequest(BaseModel):
+    url: AnyHttpUrl
+
+
+class ScrapeResponse(BaseModel):
+    content_text: str
+
+
+def _extract_main_text(html: str) -> str:
+    # Try to focus on <article> or <main> blocks first
+    try:
+        article_match = re.search(r"<article[\s\S]*?</article>", html, flags=re.IGNORECASE)
+        main_match = re.search(r"<main[\s\S]*?</main>", html, flags=re.IGNORECASE)
+        snippet = None
+        if article_match:
+            snippet = article_match.group(0)
+        elif main_match:
+            snippet = main_match.group(0)
+        else:
+            snippet = html
+        # Remove scripts/styles
+        snippet = re.sub(r"<script[\s\S]*?</script>", " ", snippet, flags=re.IGNORECASE)
+        snippet = re.sub(r"<style[\s\S]*?</style>", " ", snippet, flags=re.IGNORECASE)
+        # Strip tags
+        text = re.sub(r"<[^>]+>", " ", snippet)
+        text = unescape(text)
+        # Collapse whitespace
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+    except Exception:
+        return ""
+
+
+@app.post("/scrape", response_model=ScrapeResponse)
+def scrape(req: ScrapeRequest) -> ScrapeResponse:
+    try:
+        with httpx.Client(timeout=10.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (compatible; AI-Newsletter/1.0)"}) as client:
+            resp = client.get(str(req.url))
+            resp.raise_for_status()
+            text = _extract_main_text(resp.text)
+            # Limit to a safe size for LLM context
+            if len(text) > 8000:
+                text = text[:8000]
+            return ScrapeResponse(content_text=text)
+    except Exception:
+        return ScrapeResponse(content_text="")
+
+
+class HighlightsRequest(BaseModel):
+    sources: List[AnyHttpUrl]
+    since_days: int = Field(default=7, ge=1, le=31)
+    max_articles: int = Field(default=8, ge=1, le=20)
+
+
+class HighlightsResponse(BaseModel):
+    items: List[HighlightItem]
+
+
+@app.post("/summaries", response_model=HighlightsResponse)
+def summaries(req: HighlightsRequest) -> HighlightsResponse:
+    # Enforce selection: if no sources, return empty list
+    if not req.sources:
+        return HighlightsResponse(items=[])
+
+    articles_resp = aggregate(AggregateRequest(sources=req.sources, since_days=req.since_days))
+    items: List[HighlightItem] = []
+
+    # Use configurable limit (default 8, max 20)
+    limited_articles = articles_resp.articles[:req.max_articles]
+
+    for a in limited_articles:
+        # Scrape content with shorter timeout
+        content_text = ""
+        try:
+            with httpx.Client(timeout=5.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (compatible; AI-Newsletter/1.0)"}) as client:
+                resp = client.get(str(a.link))
+                resp.raise_for_status()
+                raw_html = resp.text
+                content_text = _extract_main_text(raw_html)
+        except Exception:
+            # Fallback to RSS summary if scraping fails
+            content_text = a.summary or ""
+
+        if len(content_text) > 4000:  # Reduced from 8000 for faster processing
+            content_text = content_text[:4000]
+
+        # If no content available, use title and RSS summary
+        if not content_text.strip():
+            content_text = f"Title: {a.title}\nRSS Summary: {a.summary or 'No summary available'}"
+
+        # Summarize the single article's content
+        system = (
+            "You are an expert AI news editor. Summarize the article content for a busy technical audience. "
+            "Be concise (3-5 bullet points), capture key findings. If content is limited, work with what's available."
+        )
+        user = (
+            f"Title: {a.title}\nSource: {a.source or ''}\nURL: {a.link}\n\n"
+            f"Content:\n{content_text}\n\n"
+            "Write a clear, concise summary."
+        )
+        
+        try:
+            summary_text = _chat([
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ], temperature=0.3)
+        except Exception:
+            # Fallback if OpenAI fails
+            summary_text = a.summary or f"Unable to generate summary for: {a.title}"
+
+        items.append(HighlightItem(title=a.title, link=a.link, source=a.source, summary=summary_text.strip()))
+
+    return HighlightsResponse(items=items)
+
+
+@app.post("/summaries_selected", response_model=HighlightsResponse)
+def summaries_selected(req: SummariesSelectedRequest) -> HighlightsResponse:
+    """Process summaries for only selected articles (no RSS aggregation needed)"""
+    items: List[HighlightItem] = []
+
+    for a in req.articles[:5]:  # Limit to 5 articles max for performance
+        # Scrape content with shorter timeout
+        content_text = ""
+        try:
+            with httpx.Client(timeout=5.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (compatible; AI-Newsletter/1.0)"}) as client:
+                resp = client.get(str(a.link))
+                resp.raise_for_status()
+                raw_html = resp.text
+                content_text = _extract_main_text(raw_html)
+        except Exception:
+            # Fallback to RSS summary if scraping fails
+            content_text = a.summary or ""
+
+        if len(content_text) > 4000:  # Reduced for faster processing
+            content_text = content_text[:4000]
+
+        # If no content available, use title and RSS summary
+        if not content_text.strip():
+            content_text = f"Title: {a.title}\nRSS Summary: {a.summary or 'No summary available'}"
+
+        # Summarize the single article's content
+        system = (
+            "You are an expert AI news editor. Summarize the article content for a busy technical audience. "
+            "Be concise (3-5 bullet points), capture key findings. If content is limited, work with what's available."
+        )
+        user = (
+            f"Title: {a.title}\nSource: {a.source or ''}\nURL: {a.link}\n\n"
+            f"Content:\n{content_text}\n\n"
+            "Write a clear, concise summary."
+        )
+        
+        try:
+            summary_text = _chat([
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ], temperature=0.3)
+        except Exception:
+            # Fallback if OpenAI fails
+            summary_text = a.summary or f"Unable to generate summary for: {a.title}"
+
+        items.append(HighlightItem(title=a.title, link=a.link, source=a.source, summary=summary_text.strip()))
+
+    return HighlightsResponse(items=items)
+
+
 def _chat(messages: List[Dict[str, str]], temperature: float = 0.4) -> str:
     completion = openai_client.chat.completions.create(
         model=MODEL,
@@ -209,8 +418,8 @@ def _chat(messages: List[Dict[str, str]], temperature: float = 0.4) -> str:
     return completion.choices[0].message.content or ""
 
 
-@app.post("/summarize", response_model=SummarizeResponse)
-def summarize(req: SummarizeRequest) -> SummarizeResponse:
+@app.post("/highlights", response_model=SummarizeResponse)
+def highlights_endpoint(req: SummarizeRequest) -> SummarizeResponse:
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set")
 
@@ -225,9 +434,15 @@ def summarize(req: SummarizeRequest) -> SummarizeResponse:
         ]
     )
 
+    # Anchor summary to the current week to avoid stale dates from the model
+    now_local = datetime.now()
+    week_start = now_local - timedelta(days=now_local.weekday())  # Monday
+    week_of = week_start.strftime("%b %d, %Y")
+
     system = (
         "You are an expert AI news editor. Create a crisp weekly summary for a technical audience. "
-        "Use clear section headings, bullet points, and callouts. Include hyperlinks when relevant."
+        "Use clear section headings, bullet points, and callouts. Include hyperlinks when relevant. "
+        f"Always label the summary with a top heading 'Week of {week_of}'."
     )
     user = (
         f"Write a weekly highlights summary based on these items:\n\n{articles_text}\n\n"
@@ -245,6 +460,12 @@ def summarize(req: SummarizeRequest) -> SummarizeResponse:
     )
 
     content = _chat(messages, temperature=0.3)
+    # Ensure the summary includes the correct 'Week of' label without duplication
+    content_clean = content.strip()
+    if not content_clean.lower().startswith(("week of", "# week of", "## week of")):
+        content = f"## Week of {week_of}\n\n" + content_clean
+    else:
+        content = content_clean
     memory.last_summary = content
     memory.history.append(ConversationTurn(role="user", content=user))
     memory.history.append(ConversationTurn(role="assistant", content=content))
@@ -256,129 +477,381 @@ def generate_tweets(req: TweetsRequest) -> TweetsResponse:
     memory = get_memory(req.session_id)
     if req.prior_history:
         memory.history.extend(req.prior_history[-8:])
-    system = (
-        "You write engaging, factual, and concise Twitter posts (X)."
-    )
-    user = (
-        "Create 3 distinct tweets derived from the weekly AI summary below. "
-        "Vary tone and angle. Include 1-2 relevant emojis and 1-2 hashtags per tweet. "
-        "Keep each under 280 characters. Do not number them; return as a JSON array of strings.\n\n"
-        f"Summary:\n{req.summary_markdown}"
-    )
-    messages = (
-        [
-            {"role": "system", "content": system},
-        ]
-        + [{"role": t.role, "content": t.content} for t in memory.history[-6:]]
-        + [
-            {"role": "user", "content": user},
-        ]
-    )
-    content = _chat(messages, temperature=0.7)
-    tweets: List[str]
-    try:
-        tweets = json.loads(content)
-        if not isinstance(tweets, list):
-            raise ValueError
-        tweets = [str(t) for t in tweets][:3]
-    except Exception:
-        # Fallback: split by newlines
-        tweets = [t.strip("- ") for t in content.split("\n") if t.strip()][:3]
-
-    memory.last_tweets = tweets
+    
+    tweets: List[Tweet] = []
+    
+    for i, summary in enumerate(req.summaries):
+        system = (
+            "You write engaging, factual, and concise Twitter posts (X). "
+            "Create ONE tweet about this specific AI news article."
+        )
+        user = (
+            f"Create a single engaging tweet about this AI news article:\n\n"
+            f"Title: {summary.title}\n"
+            f"Source: {summary.source}\n"
+            f"Summary: {summary.summary}\n\n"
+            "Include 1-2 relevant emojis and 1-2 hashtags. Keep under 280 characters. "
+            "Return only the tweet text, no JSON formatting."
+        )
+        
+        messages = (
+            [{"role": "system", "content": system}]
+            + [{"role": t.role, "content": t.content} for t in memory.history[-4:]]
+            + [{"role": "user", "content": user}]
+        )
+        
+        try:
+            tweet_content = _chat(messages, temperature=0.7)
+            # Clean up the response
+            tweet_content = tweet_content.strip().strip('"').strip("'")
+            
+            tweet = Tweet(
+                id=f"tweet_{i}_{summary.title[:20].replace(' ', '_')}",
+                content=tweet_content,
+                summary_title=summary.title,
+                summary_link=str(summary.link),
+                summary_source=summary.source or "Unknown"
+            )
+            tweets.append(tweet)
+            
+        except Exception:
+            # Fallback tweet if AI generation fails
+            fallback_content = f"🤖 {summary.title[:200]}... #AI #Tech"
+            tweet = Tweet(
+                id=f"tweet_{i}_{summary.title[:20].replace(' ', '_')}",
+                content=fallback_content,
+                summary_title=summary.title,
+                summary_link=str(summary.link),
+                summary_source=summary.source or "Unknown"
+            )
+            tweets.append(tweet)
+    
+    # Store conversation context
+    turn_user = ConversationTurn(role="user", content=f"Generated {len(tweets)} tweets from summaries")
+    turn_assistant = ConversationTurn(role="assistant", content="Tweets generated successfully")
+    memory.history.append(turn_user)
+    memory.history.append(turn_assistant)
+    
+    memory.last_tweets = [t.content for t in tweets]  # Store for backward compatibility
     return TweetsResponse(tweets=tweets)
 
 
 def _build_newsletter_html(summary_md: str, articles: List[Article]) -> str:
-    # Minimal Mailchimp-like layout with inline CSS for broad compatibility
-    # For production, consider a templating system and inlining CSS
-    article_items = "".join(
-        [
-            f"""
-            <tr>
-              <td style=\"padding:12px 0; border-bottom:1px solid #eee;\">
-                <a href=\"{a.link}\" style=\"font-size:16px; color:#2563eb; text-decoration:none;\">{a.title}</a>
-                <div style=\"color:#6b7280; font-size:12px; margin-top:4px;\">{(a.source or '')}{' • ' + (a.published or '') if a.published else ''}</div>
-                {f'<div style=\\"margin-top:6px; color:#111827;\\">{a.summary}</div>' if a.summary else ''}
-              </td>
-            </tr>
-            """
-            for a in articles[:12]
-        ]
-    )
-    # Very simple markdown to HTML conversions (headings and bullets)
-    def md_to_html(md: str) -> str:
-        lines = []
-        for line in md.splitlines():
-            if line.startswith("### "):
-                lines.append(f"<h3 style=\"margin:16px 0 8px;\">{line[4:]}</h3>")
-            elif line.startswith("## "):
-                lines.append(f"<h2 style=\"margin:20px 0 10px;\">{line[3:]}</h2>")
-            elif line.startswith("- "):
-                lines.append(f"<li>{line[2:]}</li>")
-            else:
-                if line.strip():
-                    lines.append(f"<p style=\"margin:8px 0;\">{line}</p>")
-        # Wrap list items in a <ul>
-        html = []
-        in_list = False
-        for l in lines:
-            if l.startswith("<li>") and not in_list:
-                in_list = True
-                html.append("<ul style=\"margin:8px 0 8px 20px;\">")
-            if not l.startswith("<li>") and in_list:
-                in_list = False
-                html.append("</ul>")
-            html.append(l)
-        if in_list:
-            html.append("</ul>")
-        return "".join(html)
-
-    summary_html = md_to_html(summary_md)
-    now = datetime.now().strftime("%b %d, %Y")
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset=\"utf-8\" />
-      <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-      <title>AI Weekly — {now}</title>
-    </head>
-    <body style=\"margin:0; padding:0; background:#f3f4f6;\">
-      <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"background:#f3f4f6;\">
-        <tr>
-          <td align=\"center\">
-            <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"640\" style=\"max-width:640px; background:#ffffff; margin:24px; padding:24px; font-family:ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; color:#111827;\">
-              <tr>
-                <td style=\"text-align:center; padding-bottom:16px;\">
-                  <img src=\"https://assets.vercel.com/image/upload/v1662130559/nextjs/Icon_dark_background.png\" alt=\"AI Weekly\" width=\"48\" height=\"48\" style=\"display:inline-block; border-radius:8px;\" />
-                  <h1 style=\"margin:12px 0 0; font-size:24px;\">AI Weekly</h1>
-                  <div style=\"color:#6b7280;\">{now}</div>
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  {summary_html}
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <h2 style=\"margin:24px 0 12px;\">Top Reads</h2>
-                  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">{article_items}</table>
-                </td>
-              </tr>
-              <tr>
-                <td style=\"padding-top:24px; color:#6b7280; font-size:12px;\">
-                  You are receiving this because you subscribed to AI Weekly. Unsubscribe at any time.
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-    </body>
-    </html>
-    """
+    # Select featured article (first article with good content)
+    featured_article = None
+    remaining_articles = []
+    
+    for article in articles[:8]:  # Use first 8 articles
+        if not featured_article and article.summary and len(article.summary) > 100:
+            featured_article = article
+        else:
+            remaining_articles.append(article)
+    
+    # If no good featured article found, use the first one
+    if not featured_article and articles:
+        featured_article = articles[0]
+        remaining_articles = articles[1:8]
+    
+    # Build news grid items (max 6 items, 2x3 grid)
+    news_items = ""
+    for i, article in enumerate(remaining_articles[:6]):
+        news_items += f"""
+                    <div class="news-item">
+                        <h4>{article.title}</h4>
+                        <p>{(article.summary or 'Click to read more about this story.')[:150]}{'...' if len(article.summary or '') > 150 else ''}</p>
+                        <a href="{article.link}" class="read-more">Read more →</a>
+                    </div>
+        """
+    
+    now = datetime.now().strftime("%B %d, %Y")
+    
+    # Format featured article
+    featured_title = featured_article.title if featured_article else "AI Weekly Highlights"
+    featured_summary = (featured_article.summary or "This week brings exciting developments in AI and technology.")[:200] + "..." if featured_article and len(featured_article.summary or "") > 200 else (featured_article.summary if featured_article else "This week brings exciting developments in AI and technology.")
+    featured_link = featured_article.link if featured_article else "#"
+    
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Weekly - Newsletter</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            background-color: #f4f4f4;
+            color: #333;
+        }}
+        
+        .container {{
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: white;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }}
+        
+        .header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }}
+        
+        .logo {{
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }}
+        
+        .tagline {{
+            font-size: 14px;
+            opacity: 0.9;
+        }}
+        
+        .content {{
+            padding: 30px 20px;
+        }}
+        
+        .section {{
+            margin-bottom: 30px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 30px;
+        }}
+        
+        .section:last-child {{
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }}
+        
+        .section h2 {{
+            color: #667eea;
+            font-size: 22px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+            padding-left: 15px;
+        }}
+        
+        .featured-article {{
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }}
+        
+        .featured-article h3 {{
+            font-size: 20px;
+            margin-bottom: 10px;
+        }}
+        
+        .featured-article p {{
+            margin-bottom: 15px;
+            opacity: 0.95;
+        }}
+        
+        .btn {{
+            display: inline-block;
+            background-color: white;
+            color: #f5576c;
+            padding: 12px 25px;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: bold;
+            transition: transform 0.3s ease;
+        }}
+        
+        .btn:hover {{
+            transform: translateY(-2px);
+        }}
+        
+        .news-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }}
+        
+        .news-item {{
+            border: 1px solid #eee;
+            border-radius: 8px;
+            padding: 20px;
+            transition: box-shadow 0.3s ease;
+        }}
+        
+        .news-item:hover {{
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }}
+        
+        .news-item h4 {{
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }}
+        
+        .news-item p {{
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }}
+        
+        .read-more {{
+            color: #667eea;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: bold;
+        }}
+        
+        .cta-section {{
+            background-color: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            border-radius: 10px;
+        }}
+        
+        .cta-section h3 {{
+            color: #333;
+            margin-bottom: 15px;
+        }}
+        
+        .cta-btn {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 30px;
+            font-weight: bold;
+            display: inline-block;
+            margin-top: 10px;
+        }}
+        
+        .social-links {{
+            text-align: center;
+            margin-top: 30px;
+        }}
+        
+        .social-links a {{
+            display: inline-block;
+            margin: 0 10px;
+            width: 40px;
+            height: 40px;
+            background-color: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 50%;
+            line-height: 40px;
+            transition: background-color 0.3s ease;
+        }}
+        
+        .social-links a:hover {{
+            background-color: #764ba2;
+        }}
+        
+        .footer {{
+            background-color: #333;
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }}
+        
+        .footer p {{
+            margin-bottom: 10px;
+            font-size: 14px;
+        }}
+        
+        .footer a {{
+            color: #667eea;
+            text-decoration: none;
+        }}
+        
+        @media (max-width: 600px) {{
+            .news-grid {{
+                grid-template-columns: 1fr;
+            }}
+            
+            .container {{
+                margin: 10px;
+            }}
+            
+            .content {{
+                padding: 20px 15px;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">AI Weekly</div>
+            <div class="tagline">Your weekly dose of AI insights • {now}</div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="content">
+            <!-- Welcome Section -->
+            <div class="section">
+                <h2>📧 This Week's Highlights</h2>
+                <p>Hello AI Tech Enthusiasts! Welcome to another edition of AI Weekly. This week, we're diving deep into the latest AI developments, breakthrough innovations, and emerging technologies that are shaping our digital future.</p>
+            </div>
+            
+            <!-- Featured Article -->
+            <div class="section">
+                <h2>🌟 Featured Story</h2>
+                <div class="featured-article">
+                    <h3>{featured_title}</h3>
+                    <p>{featured_summary}</p>
+                    <a href="{featured_link}" class="btn">Read Full Article</a>
+                </div>
+            </div>
+            
+            <!-- News Section -->
+            <div class="section">
+                <h2>📰 Latest AI News</h2>
+                <div class="news-grid">
+                    {news_items}
+                </div>
+            </div>
+            
+            <!-- CTA Section -->
+            <div class="section">
+                <div class="cta-section">
+                    <h3>🤖 Stay Connected</h3>
+                    <p>Join thousands of AI enthusiasts getting the latest insights delivered weekly.</p>
+                    <a href="#" class="cta-btn">Subscribe for Updates</a>
+                </div>
+            </div>
+            
+            <!-- Social Links -->
+            <div class="social-links">
+                <a href="#">🐦</a>
+                <a href="#">📘</a>
+                <a href="#">💼</a>
+                <a href="#">📧</a>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <p><strong>AI Weekly</strong></p>
+            <p>Curated with ❤️ by AI Newsletter</p>
+            <p>© 2025 AI Weekly. All rights reserved.</p>
+            <p style="margin-top: 20px;">
+                <a href="#">Unsubscribe</a> | 
+                <a href="#">Update Preferences</a> | 
+                <a href="#">Privacy Policy</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>"""
 
 
 @app.post("/newsletter", response_model=NewsletterResponse)
@@ -414,6 +887,102 @@ def edit(req: EditRequest) -> EditResponse:
     memory.history.append(turn_user)
     memory.history.append(turn_assistant)
     return EditResponse(edited_text=content, history=memory.history[-10:])
+
+
+@app.post("/edit_tweet", response_model=TweetEditResponse)
+def edit_tweet(req: TweetEditRequest) -> TweetEditResponse:
+    # Get or create conversation history for this specific tweet
+    conversation_key = f"{req.session_id}_tweet_{req.tweet_id}"
+    if conversation_key not in memory_store:
+        memory_store[conversation_key] = SessionMemory(session_id=conversation_key)
+    
+    tweet_memory = memory_store[conversation_key]
+    
+    # Add any provided conversation history
+    if req.conversation_history:
+        tweet_memory.history.extend(req.conversation_history)
+    
+    system = (
+        "You are an AI assistant helping to edit and improve Twitter/X posts. "
+        "You have context about the original article summary and the current tweet. "
+        "Help the user modify the tweet based on their requests while keeping it STRICTLY under 280 characters. "
+        "CRITICAL: Count characters carefully - if adding hashtags would exceed 280 chars, shorten the main text to make room. "
+        "IMPORTANT: Always structure your response as follows:\n"
+        "1. A brief conversational response to the user\n"
+        "2. Then on a new line, write 'UPDATED TWEET:' followed by the new tweet content\n"
+        "Example format:\n"
+        "Sure! I'll add more hashtags and shorten the text to fit.\n\n"
+        "UPDATED TWEET: Your concise tweet content with #hashtags #AI #Tech"
+    )
+    
+    context = (
+        f"Original Article Summary: {req.original_summary}\n"
+        f"Current Tweet: {req.current_tweet}\n"
+        f"User Request: {req.user_message}"
+    )
+    
+    messages = (
+        [{"role": "system", "content": system}]
+        + [{"role": t.role, "content": t.content} for t in tweet_memory.history[-6:]]
+        + [{"role": "user", "content": context}]
+    )
+    
+    ai_response = _chat(messages, temperature=0.7)
+    
+    # Extract the new tweet and AI message using the structured format
+    new_tweet = req.current_tweet  # Fallback to current tweet
+    ai_message = ai_response
+    
+    # Look for "UPDATED TWEET:" pattern
+    if "UPDATED TWEET:" in ai_response:
+        parts = ai_response.split("UPDATED TWEET:", 1)
+        if len(parts) == 2:
+            ai_message = parts[0].strip()
+            new_tweet = parts[1].strip()
+            
+            # Clean up the new tweet (remove any quotes or extra formatting)
+            new_tweet = new_tweet.strip('"').strip("'").strip()
+            
+            # Validate tweet length and truncate smartly
+            if len(new_tweet) > 280:
+                # Try to truncate at word boundaries to avoid cutting hashtags
+                words = new_tweet.split(' ')
+                truncated = ""
+                for word in words:
+                    if len(truncated + " " + word) <= 280:
+                        if truncated:
+                            truncated += " " + word
+                        else:
+                            truncated = word
+                    else:
+                        break
+                new_tweet = truncated if truncated else new_tweet[:280]
+            
+            if not ai_message:
+                ai_message = "I've updated your tweet based on your request!"
+    else:
+        # Fallback: if the structured format wasn't followed, try to extract tweet-like content
+        lines = ai_response.split('\n')
+        for line in lines:
+            line = line.strip()
+            if len(line) > 20 and len(line) <= 280 and ('#' in line or '@' in line or any(emoji in line for emoji in ['🔥', '🚀', '💡', '🤖', '⚡'])):
+                new_tweet = line
+                ai_message = ai_response.replace(new_tweet, "").strip()
+                if not ai_message:
+                    ai_message = "I've updated your tweet based on your request!"
+                break
+    
+    # Store conversation
+    turn_user = ConversationTurn(role="user", content=req.user_message)
+    turn_assistant = ConversationTurn(role="assistant", content=ai_response)
+    tweet_memory.history.append(turn_user)
+    tweet_memory.history.append(turn_assistant)
+    
+    return TweetEditResponse(
+        new_tweet=new_tweet,
+        ai_response=ai_message,
+        conversation_history=tweet_memory.history[-10:]
+    )
 
 
 # Provide a synchronous alternative endpoint with explicit model

@@ -15,7 +15,17 @@ export default function FeedPicker({
   const [custom, setCustom] = useState('')
 
   useEffect(() => {
-    fetch(`${apiBase}/defaults`).then(r => r.json()).then(setDefaults).catch(console.error)
+    let cancelled = false
+    fetch(`${apiBase}/defaults`).then(r => r.json()).then((data: Record<string, string>) => {
+      if (cancelled) return
+      setDefaults(data)
+      // Default select all if none selected yet
+      if (selected.length === 0) {
+        const all = Object.values(data)
+        setSelected(all)
+      }
+    }).catch(console.error)
+    return () => { cancelled = true }
   }, [apiBase])
 
   function toggle(url: string) {
@@ -41,10 +51,13 @@ export default function FeedPicker({
           </label>
         ))}
       </div>
+      {/* Temporarily disabled custom RSS URL input */}
+      {/*
       <div className="mt-3 flex gap-2">
         <input className="input w-full" placeholder="Add custom RSS URL" value={custom} onChange={e => setCustom(e.target.value)} />
         <button className="btn" onClick={addCustom}>Add</button>
       </div>
+      */}
     </div>
   )
 }

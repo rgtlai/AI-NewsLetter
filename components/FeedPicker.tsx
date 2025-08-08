@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 export default function FeedPicker({
   selected,
   setSelected,
-  apiBase = '/api',
+  apiBase = '',
 }: {
   selected: string[]
   setSelected: (s: string[]) => void

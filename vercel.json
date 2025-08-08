@@ -1,11 +1,11 @@
 {
+  "version": 2,
   "functions": {
-    "api/index.py": {
+    "api/**/*.py": {
       "runtime": "python3.11",
       "maxDuration": 10
     }
-  },
-  "framework": "nextjs"
+  }
 }
 
 

@@ -11,7 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen bg-gradient-to-b from-indigo-50 to-purple-50 text-gray-900">
         <div className="mx-auto max-w-5xl px-4 py-6">
-          <header className="mb-6 flex items-center justify-between">
+          <header className="mb-6">
             <div className="flex items-center gap-3">
               <img src="/logo.svg" alt="AI Newsletter" className="h-10 w-10" />
               <div>
@@ -19,7 +19,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <p className="text-xs text-gray-500">Curate, summarize, and publish—fast.</p>
               </div>
             </div>
-            <a className="btn" href="https://vercel.com" target="_blank" rel="noreferrer">Deploy</a>
           </header>
           {children}
         </div>

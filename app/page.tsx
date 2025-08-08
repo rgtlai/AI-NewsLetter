@@ -18,7 +18,7 @@ function Spinner() {
 
 export default function Page() {
   const [sessionId] = useState(() => Math.random().toString(36).slice(2))
-  const [apiBase] = useState('/api/index')
+  const [apiBase] = useState('/api')
   const [sources, setSources] = useState<string[]>([])
   const [articles, setArticles] = useState<Article[]>([])
   const [summary, setSummary] = useState('')
@@ -497,11 +497,11 @@ export default function Page() {
           </div>
           <div className="card p-4">
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Tweets</h3>
+              <h3 className="text-sm font-semibold">X/Tweets</h3>
               <div className="flex gap-2">
                 <button className="btn flex items-center gap-2" onClick={makeTweets} disabled={highlights.length === 0 || loadingTweets}>
                   {loadingTweets && <Spinner />}
-                  Generate Tweets
+                  Generate X/Tweets
                 </button>
               </div>
             </div>

@@ -11,7 +11,7 @@ export default function EditorModal({
   initialText,
   sessionId,
   title,
-  apiBase = '/api/index',
+  apiBase = '/api',
 }: {
   open: boolean
   onClose: () => void

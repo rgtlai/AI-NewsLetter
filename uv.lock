@@ -14,6 +14,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "feedparser" },
     { name = "httpx" },
+    { name = "mangum" },
     { name = "openai" },
     { name = "pydantic" },
     { name = "python-dateutil" },
@@ -27,6 +28,7 @@ requires-dist = [
     { name = "fastapi", specifier = "==0.111.0" },
     { name = "feedparser", specifier = "==6.0.11" },
     { name = "httpx", specifier = "==0.27.0" },
+    { name = "mangum", specifier = "==0.18.0" },
     { name = "openai", specifier = "==1.35.10" },
     { name = "pydantic", specifier = "==2.8.2" },
     { name = "python-dateutil", specifier = "==2.9.0.post0" },
@@ -249,6 +251,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d", size = 245115 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67", size = 134899 },
+]
+
+[[package]]
+name = "mangum"
+version = "0.18.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5f/7b/0297f416339ba43512bfeea976f5701cfe1ec06709b098c2e54c710aca57/mangum-0.18.0.tar.gz", hash = "sha256:50179395012d9ae3df30484c16280decf0c56fb4c76bd6e1979b9b60135f254f", size = 86716 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/25/96b21305063ff9cc609b2a50b178f9bff4dda4fc29e3ce6ce71b91f5c85d/mangum-0.18.0-py3-none-any.whl", hash = "sha256:cf71aa89bd655d465ece62c9c336be6b537eb297cfc72f7ea463aabc5eda2e6a", size = 16995 },
 ]
 
 [[package]]

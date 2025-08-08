@@ -1014,9 +1014,3 @@ def download_html(req: DownloadRequest):
     return Response(content=buffer.getvalue(), headers=headers, media_type="text/html")
 
 
-# Vercel handler function
-def handler(request, response):
-    """Vercel serverless function handler"""
-    from mangum import Mangum
-    asgi_handler = Mangum(app)
-    return asgi_handler(request, response)

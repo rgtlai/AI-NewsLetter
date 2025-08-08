@@ -195,7 +195,12 @@ def _parse_date(dt_str: Optional[str]) -> Optional[datetime]:
 
 @app.get("/defaults", response_model=Dict[str, str])
 def get_defaults() -> Dict[str, str]:
-    return DEFAULT_FEEDS
+    """Get default RSS feed sources"""
+    try:
+        return DEFAULT_FEEDS
+    except Exception as e:
+        print(f"Error in get_defaults: {e}")
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 
 @app.post("/aggregate", response_model=AggregateResponse)
@@ -1009,3 +1014,9 @@ def download_html(req: DownloadRequest):
     return Response(content=buffer.getvalue(), headers=headers, media_type="text/html")
 
 
+# Vercel handler function
+def handler(request, response):
+    """Vercel serverless function handler"""
+    from mangum import Mangum
+    asgi_handler = Mangum(app)
+    return asgi_handler(request, response)

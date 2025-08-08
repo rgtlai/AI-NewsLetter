@@ -440,3 +440,7 @@ websockets==15.0.1 \
     --hash=sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f \
     --hash=sha256:fcd5cf9e305d7b8338754470cf69cf81f420459dbae8a3b40cee57417f4614a7
     # via uvicorn
+mangum==0.18.0 \
+    --hash=sha256:9b7f5c28fe85b43b8ff32d0b6b6e2ae97ba0ddff31426a73e3833b5c5d1bb967 \
+    --hash=sha256:ab3c5077da31e7ad8ec0cb1ab68e8a62d5d97012e12b1d7a65ea5b6ab04e0a6e
+    # via ai-newsletter

@@ -18,7 +18,7 @@ function Spinner() {
 
 export default function Page() {
   const [sessionId] = useState(() => Math.random().toString(36).slice(2))
-  const [apiBase] = useState('')
+  const [apiBase] = useState('/api')
   const [sources, setSources] = useState<string[]>([])
   const [articles, setArticles] = useState<Article[]>([])
   const [summary, setSummary] = useState('')

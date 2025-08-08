@@ -193,6 +193,12 @@ def _parse_date(dt_str: Optional[str]) -> Optional[datetime]:
         return None
 
 
+@app.get("/")
+def root():
+    """Health check endpoint"""
+    return {"status": "ok", "message": "AI Newsletter API is running"}
+
+
 @app.get("/defaults", response_model=Dict[str, str])
 def get_defaults() -> Dict[str, str]:
     """Get default RSS feed sources"""

@@ -180,8 +180,18 @@ class TweetEditResponse(BaseModel):
     conversation_history: List[ConversationTurn]
 
 
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# Initialize OpenAI client with error handling
+try:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("WARNING: OPENAI_API_KEY not found in environment variables")
+        openai_client = None
+    else:
+        openai_client = OpenAI(api_key=api_key)
+    MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+except Exception as e:
+    print(f"ERROR initializing OpenAI client: {e}")
+    openai_client = None
 
 
 def _parse_date(dt_str: Optional[str]) -> Optional[datetime]:
@@ -1020,13 +1030,7 @@ def download_html(req: DownloadRequest):
     return Response(content=buffer.getvalue(), headers=headers, media_type="text/html")
 
 
-# Vercel handler
-def handler(event, context):
-    """Vercel serverless function entry point"""
-    return app
-
-
-# Export for Vercel
+# Export for Vercel - app is automatically detected
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

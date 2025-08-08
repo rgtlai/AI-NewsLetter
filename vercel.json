@@ -1,8 +1,8 @@
 {
   "functions": {
     "api/index.py": {
-      "runtime": "python3.12",
-      "maxDuration": 30
+      "runtime": "python3.11",
+      "maxDuration": 10
     }
   },
   "framework": "nextjs"

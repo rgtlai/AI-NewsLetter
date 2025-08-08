@@ -1020,3 +1020,13 @@ def download_html(req: DownloadRequest):
     return Response(content=buffer.getvalue(), headers=headers, media_type="text/html")
 
 
+# Vercel handler
+def handler(event, context):
+    """Vercel serverless function entry point"""
+    return app
+
+
+# Export for Vercel
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

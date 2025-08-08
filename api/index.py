@@ -790,7 +790,10 @@ def _build_newsletter_html(summary_md: str, articles: List[Article]) -> str:
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <div class="logo">AI Weekly</div>
+            <div class="logo" style="display:flex; align-items:center; justify-content:center; gap:10px;">
+                <img src="https://{os.getenv('NEXT_PUBLIC_SITE_HOST', 'example.com')}/logo.svg" alt="AI Weekly" width="28" height="28" style="display:inline-block; vertical-align:middle;" />
+                <span>AI Weekly</span>
+            </div>
             <div class="tagline">Your weekly dose of AI insights • {now}</div>
         </div>
         

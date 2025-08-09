@@ -1033,6 +1033,7 @@ def download_html(req: DownloadRequest):
 # Lambda handler for AWS
 def handler(event, context):
     """AWS Lambda handler for FastAPI"""
+    print(f"Lambda handler called with event: {event['httpMethod'] if 'httpMethod' in event else 'unknown'}")
     from mangum import Mangum
     asgi_handler = Mangum(app)
     return asgi_handler(event, context)

@@ -61,7 +61,7 @@ jobs:
       - name: Build SAM application
         run: |
           rm -rf .aws-sam
-          sam build --use-container --cached --parallel
+          sam build --cached --parallel
 
       - name: Deploy SAM application
         run: |

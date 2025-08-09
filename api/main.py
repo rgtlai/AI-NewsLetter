@@ -1030,6 +1030,14 @@ def download_html(req: DownloadRequest):
     return Response(content=buffer.getvalue(), headers=headers, media_type="text/html")
 
 
+# Lambda handler for AWS
+def handler(event, context):
+    """AWS Lambda handler for FastAPI"""
+    from mangum import Mangum
+    asgi_handler = Mangum(app)
+    return asgi_handler(event, context)
+
+
 # Export for Vercel - app is automatically detected
 if __name__ == "__main__":
     import uvicorn

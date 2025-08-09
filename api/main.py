@@ -15,8 +15,11 @@ from dateutil import parser as dateparser
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file (if it exists)
+try:
+    load_dotenv()
+except Exception:
+    pass  # Ignore if .env file doesn't exist (like in Railway)
 
 
 # ASGI app for Vercel Python function: export `app`

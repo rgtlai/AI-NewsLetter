@@ -101,6 +101,10 @@ jinja2==3.1.6 \
     --hash=sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d \
     --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
     # via fastapi
+mangum==0.17.0 \
+    --hash=sha256:5b4e26375e12eed051687670466d17968f8b74beecaca432edd4eb4127f78509 \
+    --hash=sha256:f00be705605bc4793958df62e4d249abf58d254c39d90bb410d069570206f4a2
+    # via ai-newsletter
 markdown-it-py==3.0.0 \
     --hash=sha256:355216845c60bd96232cd8d8c40e8f9765cc86f46880e43a8fd22dc1a1a8cab1 \
     --hash=sha256:e3f60a94fa066dc52ec76661e37c851cb232d92f9886b15cb560aaada2df8feb
@@ -309,6 +313,7 @@ typing-extensions==4.14.1 \
     # via
     #   anyio
     #   fastapi
+    #   mangum
     #   openai
     #   pydantic
     #   pydantic-core

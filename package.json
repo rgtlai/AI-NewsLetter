@@ -1,0 +1,33 @@
+{
+  "name": "ai-newsletter",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "next dev -p 3002",
+    "api:dev": ".venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload",
+    "prebuild": "sh scripts/gen_requirements.sh",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "gen:req": "sh scripts/gen_requirements.sh"
+  },
+  "dependencies": {
+    "classnames": "2.5.1",
+    "next": "14.2.5",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "serverless-python-requirements": "^6.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.12",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.19",
+    "postcss": "8.4.39",
+    "tailwindcss": "3.4.7",
+    "typescript": "5.5.3"
+  }
+}

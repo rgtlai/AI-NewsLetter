@@ -69,6 +69,7 @@ jobs:
             --stack-name ai-newsletter-app \
             --capabilities CAPABILITY_IAM \
             --region ${{ env.AWS_REGION }} \
+            --resolve-s3 \
             --parameter-overrides \
               Environment=production \
               OpenAIApiKey="${{ secrets.OPENAI_API_KEY }}"

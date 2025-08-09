@@ -1032,11 +1032,22 @@ def download_html(req: DownloadRequest):
 
 # Lambda handler for AWS
 def handler(event, context):
-    """AWS Lambda handler for FastAPI"""
-    print(f"Lambda handler called with event: {event['httpMethod'] if 'httpMethod' in event else 'unknown'}")
-    from mangum import Mangum
-    asgi_handler = Mangum(app)
-    return asgi_handler(event, context)
+    """AWS Lambda handler for FastAPI - Version 2.0"""
+    print(f"[DEBUG v2.0] Lambda handler called with event: {event.get('httpMethod', 'unknown')}")
+    print(f"[DEBUG v2.0] Event keys: {list(event.keys())}")
+    try:
+        from mangum import Mangum
+        print("[DEBUG v2.0] Mangum imported successfully")
+        asgi_handler = Mangum(app)
+        print("[DEBUG v2.0] Mangum handler created")
+        result = asgi_handler(event, context)
+        print(f"[DEBUG v2.0] Handler result type: {type(result)}")
+        return result
+    except Exception as e:
+        print(f"[ERROR v2.0] Handler failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 # Export for Vercel - app is automatically detected

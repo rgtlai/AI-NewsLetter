@@ -1,9 +1,0 @@
-[build]
-buildCommand = "npm install && npm run build"
-
-[deploy]
-startCommand = "npm start"
-healthcheckPath = "/"
-
-[variables]
-NODE_ENV = "production"

@@ -59,7 +59,9 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Build SAM application
-        run: sam build --use-container
+        run: |
+          rm -rf .aws-sam
+          sam build --use-container --cached --parallel
 
       - name: Deploy SAM application
         run: |

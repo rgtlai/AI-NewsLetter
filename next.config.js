@@ -11,7 +11,13 @@ const nextConfig = {
         },
       ]
     }
-    return []
+    // Production: proxy to AWS API Gateway
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'https://3mco1p4kdb.execute-api.us-east-1.amazonaws.com/production/:path*',
+      },
+    ]
   },
 }
 

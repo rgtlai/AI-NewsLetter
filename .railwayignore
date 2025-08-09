@@ -1,0 +1,15 @@
+node_modules/
+.next/
+package.json
+package-lock.json
+pnpm-lock.yaml
+next.config.js
+tailwind.config.ts
+postcss.config.js
+tsconfig.json
+app/
+components/
+public/
+.vercel/
+.github/
+.serverless/
